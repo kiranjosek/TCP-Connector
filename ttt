@@ -1,0 +1,1684 @@
+#include "BufferedReader.h"
+
+BufferedReader::BufferedReader(long bufferSize):DataHolder(bufferSize)
+{
+    ReadFromDescriptor = &BufferedReader::ReadLength;
+
+}
+
+void BufferedReader::ReadFromSocket(int sock,int &status)
+{
+    //printf("Read: %d ",sock);
+
+    (this->*ReadFromDescriptor)(sock,status);
+
+    //printf("RedSock..\n");
+}
+
+void BufferedReader::ReadLength(int sock,int &status)
+{
+    int bytesRead;
+
+    int lengthLeft = sizeof(unsigned int)-  (this->m_position - (char*)(this->m_dataBuffer));
+    //printf("Len:\n");
+
+    bytesRead = read(sock,this->m_position,lengthLeft);
+
+    if(bytesRead < 1)
+    {
+        if (errno == EAGAIN)    //No bytes available on this socket to read. Process other connections
+        {
+            status = 2;
+        }
+        else //if(errno)
+        {
+            //printf("XXXXXXXXXXXXXXXXXXXXXXXX %d\n",errno);
+            perror ("read");
+            status = 1;
+        }
+
+        //printf(" Read Error ");
+
+    }
+    /*
+    else if(bytesRead == 0) // nothing read
+    {
+        status = 1;
+        printf("Read Nothing\n");
+        return;
+    }*/
+    else
+    {
+        this->m_position += bytesRead;
+        if(this->m_position - (char*)(this->m_dataBuffer) == sizeof(unsigned int))
+        {
+            //          printf("Buffer == 4 \n");
+            this->CheckForBufferSize();
+            ReadFromDescriptor = &BufferedReader::ReadData;
+            ReadData(sock,status);
+        }
+    }
+}
+
+void BufferedReader::ReadData(int sock,int &status)
+{
+    int bytesRead = read(sock,this->m_position,*this->m_dataLength
+                         - (this->m_position - ((char*)(this->m_dataBuffer) +sizeof(unsigned int) )) );
+    //printf("Data:\n");
+    if(bytesRead < 1)
+    {
+        //printf("bytesRead == -1\n");
+
+        if (errno == EAGAIN)    //No bytes available on this socket to read. Process other connections
+        {
+            status = 2;
+            //printf("EAGAIN -1\n");
+        }
+        else //if(errno)
+        {
+            //printf("YYYYYYYYYYYYYYYYY %d\n",errno);
+            perror ("read");
+            status = 1;
+        }
+
+        //printf(" Read Error ");
+        //return;
+
+    }
+    /*else if(bytesRead == 0) // nothing read
+    {
+        printf("bytesRead == 0\n");
+        if (errno == EAGAIN)    //No bytes available on this socket to read. Process other connections
+        {
+            status = 2;
+            printf("EAGAIN 0\n");
+
+        }
+        else //if(errno)
+        {
+            printf("YYYYYYYYYYYYYYYYY Nothing %d\n",errno);
+            perror ("read");
+            status = 1;
+        }
+
+        return;
+    }*/
+    else
+    {
+        this->m_position += bytesRead;
+        if(*this->m_dataLength - (this->m_position - ((char*)(this->m_dataBuffer) +sizeof(unsigned int))) ==0)
+        {
+            //printf("{%u}",*this->m_dataLength);
+            ProcessData();
+            //printf("%u %s",*this->m_dataLength, ((char*)this->m_dataBuffer)+ sizeof(unsigned int));
+            this->ResetPosition();
+            ReadFromDescriptor = &BufferedReader::ReadLength;
+        }
+    }
+
+}
+
+void BufferedReader::ProcessData()
+{
+    MUXER.MultiplexData((char*)this->m_dataBuffer);
+//    printf("virtual ProcessData() : %u %s",*this->m_dataLength, ((char*)this->m_dataBuffer)+ sizeof(unsigned int));
+printf("\r\nvirtual ProcessData() : %u",*this->m_dataLength);
+}
+
+
+#ifndef BUFFEREDREADER_H
+#define BUFFEREDREADER_H
+#include "DataHolder.h"
+#include "CallBackClass.h"
+
+#include "DataMultiplexer.h"
+#include <errno.h>
+#include <stdio.h>
+//DataMultiplexer MUXER;
+
+class BufferedReader: public DataHolder
+{
+public:
+
+    BufferedReader(long bufferSize);
+    void ReadLength(int sock,int &status);
+    void ReadData(int sock,int &status);
+    void ReadFromSocket(int sock,int &status);
+
+protected:
+    virtual void ProcessData();
+private:
+        void (BufferedReader::*ReadFromDescriptor)(int,int&);
+
+};
+
+#endif // BUFFEREDREADER_H
+
+#include "BufferedWriter.h"
+
+BufferedWriter::BufferedWriter()
+{
+    m_buffer = NULL;
+}
+
+BufferedWriter::~BufferedWriter()
+{
+    if(m_buffer)
+        delete []m_buffer;
+
+    m_buffer = NULL;
+}
+
+int BufferedWriter::WriteToSocket(int socketfd,char* dataStream,long dataLength)
+{
+    int sentBytes = 0;
+    int cSendByted = 0;
+
+    do
+    {
+        cSendByted = ::write(socketfd,(&dataLength)+sentBytes,sizeof(unsigned int) - sentBytes);
+        if(cSendByted < 0)
+        {
+            if(errno  != EAGAIN )
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            sentBytes += cSendByted;
+        }
+
+    }while( !(dataLength-sentBytes) );
+
+    sentBytes = 0;
+    do
+    {
+        cSendByted = ::write(socketfd,dataStream+sentBytes,dataLength - sentBytes);
+        if(cSendByted < 0)
+        {
+            if(errno  != EAGAIN )
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            sentBytes += cSendByted;
+        }
+
+    }while( !(dataLength-sentBytes) );
+
+    return 0;
+}
+
+int BufferedWriter::WriteToSocket(int socketfd,char* dataStream)
+{
+    //    return WriteToSocket(socketfd,dataStream+sizeof(unsigned int),*((unsigned int *)dataStream) );
+
+    int sentBytes = 0;
+    int cSendByted = 0;
+
+    unsigned int dataLength = *((unsigned int *)dataStream) + sizeof(unsigned int);
+    //printf("Size: %d",dataLength);
+
+    //if(dataLength==0)
+    //    return 0;
+    do
+    {
+        cSendByted = ::write(socketfd,dataStream+sentBytes,dataLength - sentBytes);
+        if(cSendByted < 0)
+        {
+            if(errno  != EAGAIN )
+            {
+               perror("ERROR");
+               printf("ERROROOROOR\n");
+                return -1;
+            }
+        }
+        else
+        {
+            sentBytes += cSendByted;
+        }
+
+        //printf("SENDING....%d\n",cSendByted);
+    }while((dataLength-sentBytes) > 0 );
+
+    return 0;
+}
+
+
+#ifndef BUFFEREDWRITER_H
+#define BUFFEREDWRITER_H
+#include "DataHolder.h"
+#include <errno.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+class BufferedWriter //: public DataStream
+{
+    char *m_buffer;
+public:
+    BufferedWriter();
+    ~BufferedWriter();
+    int WriteToSocket(int socketfd,char* dataStream,long dataLength);
+    int WriteToSocket(int socketfd,char* dataStream);
+};
+
+#endif // BUFFEREDWRITER_H
+
+
+#include "CallBackClass.h"
+
+CallBackClass::CallBackClass()
+{
+}
+
+void CallBackClass::CallBack(void* a1,void* a2)
+{
+
+}
+
+#ifndef CALLBACKCLASS_H
+#define CALLBACKCLASS_H
+#include <stdlib.h>
+
+class CallBackClass
+{
+public:
+    CallBackClass();
+    virtual void CallBack(void* a1=NULL,void* a2=NULL);
+};
+
+#endif // CALLBACKCLASS_H
+
+#include "ClientSocketClass.h"
+
+ClientSocketClass::ClientSocketClass()
+{
+}
+
+int ClientSocketClass::CreateClientSocket(char* ip,int port)
+{
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr,0x00, sizeof(struct sockaddr_in));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(port);
+    serv_addr.sin_addr.s_addr = inet_addr(ip);
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0 )
+        return -1;
+
+    return sockfd;
+}
+
+#ifndef CLIENTSOCKETCLASS_H
+#define CLIENTSOCKETCLASS_H
+
+#include <stdio.h>
+#include <error.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+
+class ClientSocketClass
+{
+public:
+    ClientSocketClass();
+    int CreateClientSocket(char* ip,int port);
+
+};
+
+#endif // CLIENTSOCKETCLASS_H
+
+
+
+#include "DataHolder.h"
+#include <iostream>
+#include <string.h>
+using namespace std;
+
+DataHolder::DataHolder(int size)
+{
+    m_bufferSize = size+sizeof(unsigned int);
+    m_dataBuffer = new char[m_bufferSize];
+    ResetPosition();
+}
+
+DataHolder::~DataHolder()
+{
+    delete [] m_dataBuffer;
+}
+
+void DataHolder::ResetPosition()
+{
+    m_position = (char*)m_dataBuffer;
+    m_dataLength = (unsigned int*)m_dataBuffer;
+
+}
+
+char* DataHolder::GetBuffer()
+{
+    return (char*)m_dataBuffer;
+}
+
+unsigned int DataHolder::GetBufferSize()
+{
+    return m_bufferSize;
+}
+
+
+void DataHolder::CheckForBufferSize()
+{
+ //   cerr << (*m_dataLength)+sizeof(unsigned int) << "^^^" << m_bufferSize <<endl;
+
+    if((*m_dataLength)+sizeof(unsigned int) > m_bufferSize)
+    {
+        unsigned int lengthOfData = *m_dataLength;
+        m_bufferSize = lengthOfData+sizeof(unsigned int);
+        delete[] m_dataBuffer;
+        m_dataBuffer = new char[m_bufferSize];
+        ResetPosition();
+
+        *m_dataLength = lengthOfData;
+        m_position += sizeof(unsigned int);
+
+    }
+
+   // cerr << "Done\n";
+}
+
+#ifndef DATAHOLDER_H
+#define DATAHOLDER_H
+//#include "MemoryPool.h"
+#include <sys/epoll.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+/*
+class DataStream : public MemoryPool
+{
+public:
+    char* m_buffer;
+};
+*/
+
+class DataHolder
+{
+public:
+
+    unsigned int* m_dataLength;
+    char* m_dataBuffer;
+    char* m_position;
+    unsigned int m_bufferSize;      //  buffer size + size of (unsigned int)
+
+    DataHolder(int size);
+    void ResetPosition();
+    void CheckForBufferSize();
+    char* GetBuffer();
+    unsigned int GetBufferSize();
+    ~DataHolder();
+
+};
+
+
+#endif // DATAHOLDER_H
+
+#include "DataMultiplexer.h"
+#include <iostream>
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+
+DataMultiplexer::DataMultiplexer()
+{
+    //cerr <<"\n#####################################################################################\n";
+}
+
+void DataMultiplexer::MultiplexData(char* buff)
+{
+    pthread_mutex_lock(&lock);
+
+    vector<int> ::iterator iter = m_clientList.begin();
+    vector<int> ::iterator iterEnd = m_clientList.end();
+
+    for(; iter != iterEnd; ++iter)
+    {
+        //printf("Sending Data\n");
+        m_bufferWriter.WriteToSocket(*iter,buff);
+    }
+
+    pthread_mutex_unlock(&lock);
+
+}
+
+
+void DataMultiplexer::RemoveSubscriberSocket(int sock)
+{
+    pthread_mutex_lock(&lock);
+
+    //m_clientList.erase(remove(m_clientList.begin(),m_clientList.end(),sock),m_clientList.end());
+    vector<int>::iterator iter = m_clientList.begin();
+
+    for(unsigned i = 0; i< m_clientList.size(); ++i)
+    {
+        if(m_clientList.at(i) == sock)
+        {
+            m_clientList.erase(iter);
+            break;
+        }
+        ++iter;
+    }
+
+    pthread_mutex_unlock(&lock);
+}
+
+void DataMultiplexer::AddSubscriberSocket(int sock)
+{
+    pthread_mutex_lock(&lock);
+    m_clientList.push_back(sock);
+    pthread_mutex_unlock(&lock);
+
+}
+
+
+#ifndef DATAMULTIPLEXER_H
+#define DATAMULTIPLEXER_H
+#include <pthread.h>
+#include <vector>
+
+using namespace std;
+
+#include "BufferedWriter.h"
+
+
+class DataMultiplexer
+{
+    vector<int> m_clientList;
+
+    BufferedWriter m_bufferWriter;
+
+public:
+    DataMultiplexer();
+    void RemoveSubscriberSocket(int sock);
+    void AddSubscriberSocket(int sock);
+
+    void MultiplexData(char* buff);
+};
+
+extern DataMultiplexer MUXER;
+
+
+#endif // DATAMULTIPLEXER_H
+
+#include <iostream>
+using namespace std;
+#include "SocketWatcher.h"
+//#include "MemoryMaster.h"
+#include "SocketClass.h"
+#include "SubscriberServer.h"
+#include "RegisterServer.h"
+#include <pthread.h>
+/*
+#define SEC
+#define THR
+*/
+void *clientReceiver(void *arg)
+{
+#ifdef THR
+    //RegisterServer sockCl("127.0.0.1",4040);
+    //sockCl.StartWatcher();
+    SocketClass skcl;
+    int sockFd = skcl.CreateClientSocket("127.0.0.1",4040);
+    MUXER.AddSubscriberSocket(sockFd);
+    return 0;
+#elif defined SEC
+    RegisterServer sockCl(4042);
+    sockCl.StartWatcher();
+#else
+    RegisterServer sockCl(4041);
+    sockCl.StartWatcher();
+#endif
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    signal(SIGPIPE,SIG_IGN);
+    /*
+    {
+        SocketClass ss;
+
+        int m_sock = ss.CreateServerSocket(0);
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    if(getsockname(m_sock,(struct sockaddr*)&addr,&addrlen) == 0)
+       cerr <<"ERROR"  ;// Self.SetIp(addr);
+    }
+
+    struct hostent *h;
+    char hostname[128];
+    char *hostdots[2]={0,0}, *hdptr=hostname;
+
+    if (gethostname(hostname, 128) == -1) return -1;
+    //	  printf("%s\n", hostname);
+    while(*hdptr) if(*hdptr++ == '.')
+    {
+        hostdots[0] = hostdots[1];
+        hostdots[1] = hdptr;
+    }
+    if (hostdots[0] == 0) return -1;
+    //	  printf("%s\n", hostdots[0]);
+    if ((h = gethostbyname(hostdots[0])) == NULL) return -1;
+    //printf("Host domain  : %s\n", h->h_name);
+    //printf("IP Address : %s\n", inet_ntoa(*((struct in_addr *)h->h_addr)));
+    //memcpy(&Self.m_sin.sin_addr,h->h_addr,sizeof(struct in_addr));
+    return 0;
+
+*/
+    /*
+    cerr << "StartTimer";
+    //MemoryMaster* mm = MEMORYMASTER;
+    int size = 1024*1024*10; //1024*507 +1012;
+
+    time_t tt= time(NULL);
+    for(long i=0; i< 10000000; ++i)
+    {
+#if 1
+        MemoryBlock* memBlock = MEMORYMASTER->AllocateNewMemory(size);
+        char* ch = memBlock->m_memoryBase+(char*)MEMORYMASTER->GetMemoryBase();
+        MEMORYMASTER->FreeMemoryWithBase(ch);
+#else
+        char* cc = new char[size];
+        delete []cc;
+#endif
+        if(i%1000000==0)
+            cerr<<i;
+
+    }
+
+    cerr <<"Taken "<<time(NULL) - tt <<endl;
+
+    return 0;
+*/
+
+#ifdef THR
+
+    pthread_t tid;
+
+    int err = pthread_create(&tid, NULL, clientReceiver, 0);
+    if (err != 0)
+    {
+        cerr <<("can't create thread");
+        exit(err);
+    }
+
+
+    SubscriberServer sockCl("127.0.0.1",4042); //4041
+
+    sockCl.StartWatcher();
+
+#elif defined SEC
+
+    pthread_t tid;
+
+    int err = pthread_create(&tid, NULL, clientReceiver, 0);
+    if (err != 0)
+    {
+        cerr <<("can't create thread");
+        exit(err);
+    }
+
+
+
+    SubscriberServer sockCl("127.0.0.1",4041); //4041
+
+    sockCl.StartWatcher();
+
+#else
+
+    pthread_t tid;
+    int err = pthread_create(&tid, NULL, clientReceiver, 0);
+    if (err != 0)
+    {
+        cerr <<("can't create thread");
+        exit(err);
+    }
+
+
+    SubscriberServer sockCl(4040);
+
+    sockCl.StartWatcher();
+
+#endif
+    return 0;
+}
+
+/*
+int main(int argc, char *argv[])
+{
+
+
+
+    MemoryBlock*m1=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m1);
+    //FSize 54
+    MemoryBlock*m2=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m2);
+    //FSize 107
+    MemoryBlock*m3=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m3);
+    //FSize 108
+    MemoryBlock*m4=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m4);
+    //FSize 110
+    MemoryBlock*m5=MEMORYMASTER->allocateNewMemory(126);
+    MemoryBlock*m6=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m6);
+    //FSize 54
+    MemoryBlock*m7=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m7);
+    //FSize 107
+    MemoryBlock*m8=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m8);
+    //FSize 108
+    MemoryBlock*m9=MEMORYMASTER->allocateNewMemory(110);
+    MemoryBlock*m10=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m10);
+    //FSize 54
+    MemoryBlock*m11=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m9);
+    //FSize 110
+    MemoryBlock*m12=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m11);
+    //FSize 107
+    MemoryBlock*m13=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m14=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m14);
+    //FSize 54
+    MemoryBlock*m15=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m13);
+    //FSize 108
+    MemoryBlock*m16=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m16);
+    //FSize 110
+    MemoryBlock*m17=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m15);
+    //FSize 107
+    MemoryBlock*m18=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m19=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m19);
+    //FSize 54
+    MemoryBlock*m20=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m18);
+    //FSize 108
+    MemoryBlock*m21=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m21);
+    //FSize 110
+    MemoryBlock*m22=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m20);
+    //FSize 107
+    MemoryBlock*m23=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m24=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m24);
+    //FSize 54
+    MemoryBlock*m25=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m23);
+    //FSize 108
+    MemoryBlock*m26=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m26);
+    //FSize 110
+    MemoryBlock*m27=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m25);
+    //FSize 107
+    MemoryBlock*m28=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m28);
+    //FSize 108
+    MemoryBlock*m29=MEMORYMASTER->allocateNewMemory(110);
+    MemoryBlock*m30=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m30);
+    //FSize 54
+    MemoryBlock*m31=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m29);
+    //FSize 110
+    MemoryBlock*m32=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m31);
+    //FSize 107
+    MemoryBlock*m33=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m34=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m34);
+    //FSize 54
+    MemoryBlock*m35=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m33);
+    //FSize 108
+    MemoryBlock*m36=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m36);
+    //FSize 110
+    MemoryBlock*m37=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m35);
+    //FSize 107
+    MemoryBlock*m38=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m38);
+    //FSize 108
+    MemoryBlock*m39=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m39);
+    //FSize 110
+    MemoryBlock*m40=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m17);
+    //FSize 126);
+    MEMORYMASTER->freeMemoryBlock(m22);
+    //FSize 126);
+    MEMORYMASTER->freeMemoryBlock(m12);
+    //FSize 126
+    MemoryBlock*m41=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m41);
+    //FSize 54
+    MemoryBlock*m42=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m42);
+    //FSize 107
+    MemoryBlock*m43=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m43);
+    //FSize 108
+    MemoryBlock*m44=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m44);
+    //FSize 110
+    MemoryBlock*m45=MEMORYMASTER->allocateNewMemory(126);
+    MemoryBlock*m46=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m46);
+    //FSize 54
+    MemoryBlock*m47=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m47);
+    //FSize 107
+    MemoryBlock*m48=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m48);
+    //FSize 108
+    MemoryBlock*m49=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m49);
+    //FSize 110
+    MemoryBlock*m50=MEMORYMASTER->allocateNewMemory(126);
+    MemoryBlock*m51=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m51);
+    //FSize 54
+    MemoryBlock*m52=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m52);
+    //FSize 107
+    MemoryBlock*m53=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m54=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m54);
+    //FSize 54
+    MemoryBlock*m55=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m53);
+    //FSize 108
+    MemoryBlock*m56=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m56);
+    //FSize 110
+    MemoryBlock*m57=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m55);
+    //FSize 107
+    MemoryBlock*m58=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m59=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m59);
+    //FSize 54
+    MemoryBlock*m60=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m58);
+    //FSize 108
+    MemoryBlock*m61=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m61);
+    //FSize 110
+    MemoryBlock*m62=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m60);
+    //FSize 107
+    MemoryBlock*m63=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m63);
+    //FSize 108
+    MemoryBlock*m64=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m64);
+    //FSize 110
+    MemoryBlock*m65=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m32);
+    //FSize 126);
+    MEMORYMASTER->freeMemoryBlock(m37);
+    //FSize 126
+    MemoryBlock*m66=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m66);
+    //FSize 54
+    MemoryBlock*m67=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m67);
+    //FSize 107
+    MemoryBlock*m68=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m68);
+    //FSize 108;
+    MemoryBlock*m69=MEMORYMASTER->allocateNewMemory(110);
+    MemoryBlock*m70=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m70);
+    //FSize 54
+    MemoryBlock*m71=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m69);
+    //FSize 110
+    MemoryBlock*m72=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m71);
+    //FSize 107
+    MemoryBlock*m73=MEMORYMASTER->allocateNewMemory(108);
+    MemoryBlock*m74=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m74);
+    //FSize 54
+    MemoryBlock*m75=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m73);
+    //FSize 108
+    MemoryBlock*m76=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m76);
+    //FSize 110
+    MemoryBlock*m77=MEMORYMASTER->allocateNewMemory(126);
+    MEMORYMASTER->freeMemoryBlock(m75);
+    //FSize 107
+    MemoryBlock*m78=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m78);
+    //FSize 108
+    MemoryBlock*m79=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m79);
+    //FSize 110
+    MemoryBlock*m80=MEMORYMASTER->allocateNewMemory(126);
+    MemoryBlock*m81=MEMORYMASTER->allocateNewMemory(54);
+    MEMORYMASTER->freeMemoryBlock(m81);
+    //FSize 54
+    MemoryBlock*m82=MEMORYMASTER->allocateNewMemory(107);
+    MEMORYMASTER->freeMemoryBlock(m82);
+    //FSize 107
+    MemoryBlock*m83=MEMORYMASTER->allocateNewMemory(108);
+    MEMORYMASTER->freeMemoryBlock(m83);
+    //FSize 108
+    MemoryBlock*m84=MEMORYMASTER->allocateNewMemory(110);
+    MEMORYMASTER->freeMemoryBlock(m84);
+    //FSize 110
+    cerr << "\nZZZZZZZZZZZZ\n";
+    MemoryBlock*m85=MEMORYMASTER->allocateNewMemory(126);
+
+    cerr <<"\nXXXXXXXXXXX\n";
+
+
+    return 0;
+}
+*/
+
+#include "PeerList.h"
+
+PeerList::PeerList()
+{
+}
+
+#ifndef PEERLIST_H
+#define PEERLIST_H
+
+class PeerList
+{
+public:
+    PeerList();
+};
+
+#endif // PEERLIST_H
+
+#include "RegisterServer.h"
+
+RegisterServer::RegisterServer(int port)
+{
+    int sockFd= CreateServerSocket(port);
+    CreateEpollSocket(sockFd);
+    watchEvent = &SocketWatcher::StartServerWatcher;
+    printf("Register Server\n");
+}
+
+RegisterServer::RegisterServer(char* ipAddr,int port)
+{
+    int sockFd= CreateClientSocket(ipAddr,port);
+//    CreateEpollSocket(sockFd,1);
+    CreateEpollSocket(sockFd,DEFAULT_SERVER_EVENTS|EPOLLET,new SocketInfo(sockFd,64));
+    watchEvent = &SocketWatcher::StartClientWatcher;
+    MUXER.AddSubscriberSocket(sockFd);
+    printf("Register Client\n");
+}
+
+
+void RegisterServer::EventErrorHandler(struct epoll_event &event)
+{
+    printf("RegisterServer::EventErrorHandler();\n");
+    SocketInfo* dh = (SocketInfo*)event.data.ptr;
+    MUXER.RemoveSubscriberSocket(dh->m_socketDescriptor);
+    close (dh->m_socketDescriptor);
+    delete dh;
+}
+
+void RegisterServer::AcceptNewClientConnection(struct epoll_event &event)
+{
+    printf("RegisterServer()::AcceptNewClientConnection()\n");
+
+    struct sockaddr in_addr;
+    socklen_t in_len;
+    int infd;
+
+    in_len = sizeof in_addr;
+    infd = accept(m_listeningSocketDescriptor,&in_addr,&in_len);
+    if (infd == -1) //error or Exception
+
+        return;
+
+    if(SetSocketFlags(infd,O_NONBLOCK) < 0)
+    {
+        perror ("Flag Error:");
+        return;// exit()
+    }
+
+    event.data.ptr = new SocketInfo(infd,64);
+#ifdef EDGETRIGGERED
+    event.events = EPOLLIN | EPOLLET | EPOLLERR | EPOLLRDHUP | EPOLLHUP;
+#else
+    event.events = EPOLLIN | EPOLLERR | EPOLLRDHUP | EPOLLHUP;
+#endif
+    if(epoll_ctl(m_epollDescriptor,EPOLL_CTL_ADD,infd,&event))
+    {
+        perror ("epoll_ctl");
+        return; // exit()
+    }
+
+    MUXER.AddSubscriberSocket(infd);
+
+}
+
+void RegisterServer::ProcessClientEvent(struct epoll_event &event)
+{
+
+    printf("RegisterServer::ProcessClientEvent();\n");
+    int done = 0;
+
+    SocketInfo* dh = (SocketInfo*)event.data.ptr;
+#ifdef EDGETRIGGERED
+    while(1)
+    {
+#endif
+
+        dh->m_bufferedReader->ReadFromSocket(dh->m_socketDescriptor,done);
+        if(done == 1) // socket read Error
+        {
+            EventErrorHandler(event);
+            return;
+
+        }
+#ifdef EDGETRIGGERED
+
+        else if(done == 2) //EAGAIN
+        {
+            return;
+        }
+
+    }
+#endif
+}
+
+
+#ifndef REGISTERSERVER_H
+#define REGISTERSERVER_H
+
+#include "SocketInfo.h"
+#include "DataMultiplexer.h"
+#include "SocketWatcher.h"
+#include "SocketClass.h"
+
+class RegisterServer : public SocketWatcher, public SocketClass
+{
+
+public:
+    RegisterServer(int port);
+    RegisterServer(char* ipAddr,int port);
+
+    virtual void EventErrorHandler(struct epoll_event &event);
+    virtual void AcceptNewClientConnection(struct epoll_event &event);
+    virtual void ProcessClientEvent(struct epoll_event &event);
+};
+
+#endif // REGISTERSERVER_H
+
+
+#include "ServerSocketClass.h"
+
+ServerSocketClass::ServerSocketClass()
+{
+}
+
+int ServerSocketClass::CreateServerSocket(int port)
+{
+    int listeningSocket;
+    struct sockaddr_in servAddr;
+    int status,sockopton;
+
+    if ((listeningSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    {
+        //SetErrorString("socket() failed");
+        return -1;
+    }
+
+    sockopton = 1;
+
+    status = setsockopt(listeningSocket, SOL_SOCKET, SO_REUSEADDR, (char*) &sockopton, sizeof(sockopton));
+
+    if(status < 0)
+    {
+      perror("setsockopt(SO_REUSEADDR=1)");
+      exit(0);
+    }
+
+
+    memset(&servAddr, 0, sizeof(servAddr));
+    servAddr.sin_family = AF_INET;
+    servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servAddr.sin_port = htons(port);
+
+    if (bind(listeningSocket, (struct sockaddr *) &servAddr, sizeof(servAddr)) < 0)
+    {
+        //SetErrorString("bind() failed");
+        return -1;
+    }
+
+    if (listen(listeningSocket, MAXPENDING) < 0)
+    {
+        //SetErrorString("listen() failed");
+        return -1;
+    }
+
+    printf("Server Listening at Port\n");
+
+    return listeningSocket;
+}
+
+
+#ifndef SERVERSOCKETCLASS_H
+#define SERVERSOCKETCLASS_H
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <error.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define MAXPENDING 16
+
+class ServerSocketClass
+{
+public:
+    ServerSocketClass();
+    int CreateServerSocket(int port);
+
+};
+
+#endif // SERVERSOCKETCLASS_H
+
+
+#include "SocketClass.h"
+
+SocketClass::SocketClass()
+{
+}
+
+int SocketClass::CreateSocket(int port,char* ip)
+{
+    if(ip)
+        return CreateClientSocket(ip,port);
+
+    return CreateServerSocket(port);
+}
+
+#ifndef SOCKETCLASS_H
+#define SOCKETCLASS_H
+#include "ServerSocketClass.h"
+#include "ClientSocketClass.h"
+
+class SocketClass: public ServerSocketClass, public ClientSocketClass
+{
+public:
+    SocketClass();
+    int CreateSocket(int port,char* ip=NULL);
+};
+
+#endif // SOCKETCLASS_H
+
+#include "SocketInfo.h"
+
+SocketInfo::SocketInfo(int fd,long bufferSize)
+{
+    m_socketDescriptor = fd;
+    m_bufferedReader = new BufferedReader(bufferSize);
+}
+
+SocketInfo::~SocketInfo()
+{
+    if(m_bufferedReader)
+        delete m_bufferedReader;
+}
+
+/*
+int SocketInfo::SocketDescriptor()
+{
+    return m_socketDescriptor;
+}
+*/
+
+
+#ifndef SOCKETINFO_H
+#define SOCKETINFO_H
+#include "BufferedReader.h"
+
+struct SocketInfo
+{
+    SocketInfo(int fd,long bufferSize);
+    ~SocketInfo();
+
+    int m_socketDescriptor;
+    BufferedReader* m_bufferedReader;
+};
+
+#endif // SOCKETINFO_H
+
+
+#include "SocketWatcher.h"
+//#include "SocketInfo.h"
+
+#ifndef EPOLLRDHUP
+#define EPOLLRDHUP 0x2000
+#endif
+
+SocketWatcher::SocketWatcher()
+{
+    m_events = NULL;
+}
+
+SocketWatcher::~SocketWatcher()
+{
+    if(m_events)
+        free(m_events);
+}
+
+void SocketWatcher::CreateEpollSocket(int listeningSocket, int maximumEvent, uint32_t eventsToHandle)
+{
+    if(listeningSocket == -1)
+    {
+        printf("CreateEpollSocket(): Invalid Socket\n");
+        return;
+    }
+
+    m_listeningSocketDescriptor = listeningSocket; // Copying to Member
+    m_eventsToHandle = eventsToHandle;
+    m_maximumEventCount = maximumEvent;
+    AddDescriptor();
+}
+
+void SocketWatcher::CreateEpollSocket(int clientSocketfd,uint32_t eventsToHandle,void* buffer)
+{
+    m_listeningSocketDescriptor = clientSocketfd; // Copying to Member
+    m_maximumEventCount = 1;
+    m_eventsToHandle = eventsToHandle;
+    epoll_data_t eventData;
+    eventData.ptr = buffer;
+    AddDescriptor(&eventData);
+}
+
+void SocketWatcher::AddDescriptor(void* eventData)
+{
+
+    m_epollDescriptor = epoll_create(m_maximumEventCount);
+
+    if(m_epollDescriptor < 0)
+    {
+        perror("Epoll Create Error\n");
+        m_socketStatus = errno;
+        return;
+    }
+
+    if(SetSocketFlags(m_listeningSocketDescriptor,O_NONBLOCK) < 0)
+    {
+        perror("Set Socket Flag\n");
+        m_socketStatus = errno;
+        return;
+    }
+
+    if(m_maximumEventCount ==1)
+    {
+        //m_event.data.fd = m_listeningSocketDescriptor;
+        memcpy(&m_event.data,eventData,sizeof(m_event.data));// = new SocketInfo(m_listeningSocketDescriptor,64);
+    }
+    else
+    {
+        m_event.data.fd = m_listeningSocketDescriptor;
+    }
+
+    m_event.events = m_eventsToHandle;//| EPOLLET;
+
+    if(epoll_ctl(m_epollDescriptor,EPOLL_CTL_ADD,m_listeningSocketDescriptor,&m_event) < 0)
+    {
+        perror ("epoll_ctl:");
+        return;
+    }
+
+    m_events = (struct epoll_event*)calloc(m_maximumEventCount,sizeof(epoll_event));
+
+    printf("AddDescriptor Done\n");
+
+}
+
+void SocketWatcher::StartWatcher()
+{
+    (this->*watchEvent)();
+}
+
+void SocketWatcher::StartServerWatcher()
+{
+    printf("startWatcher\n");
+    int numberOfPollEvent,i;
+
+    while(1)
+    {
+        //printf("Event");
+        fflush(stdout);
+
+        numberOfPollEvent = epoll_wait(m_epollDescriptor,m_events,m_maximumEventCount,-1);
+
+        //printf(" Occured: Count %d \n",numberOfPollEvent);
+
+        for (i=0;i<numberOfPollEvent;i++) // loop each events
+        {
+            //printf("for [%d] \n",i);
+            if (( (m_events[i].events & EPOLLERR) || (m_events[i].events & EPOLLRDHUP)
+                ||  (m_events[i].events & EPOLLHUP) ))// && (!(m_events[i].events & EPOLLIN)))
+                {
+                EventErrorHandler(m_events[i]);
+            }
+            else if(m_events[i].events & EPOLLIN)
+            {
+                if (m_listeningSocketDescriptor == m_events[i].data.fd)
+                {
+                    AcceptNewClientConnection(m_event);
+                    //continue;
+                }
+                else // Event On Client Socket
+                {
+                    ProcessClientEvent(m_events[i]);
+                    //        printf("Returned\n");
+                }
+                //      printf("ELSe\n");
+            }
+
+            //    printf("Completed");
+            fflush(stdout);
+
+        }
+        //  printf("Next While...");
+        fflush(stdout);
+
+    }
+
+    free(m_events);
+}
+
+void SocketWatcher::StartClientWatcher()
+{
+    printf("startWatcher\n");
+    int numberOfPollEvent,i=0;
+
+    while(1)
+    {
+        numberOfPollEvent = epoll_wait(m_epollDescriptor,m_events,m_maximumEventCount,-1);
+
+        //printf(" Occured: Count %d \n",numberOfPollEvent);
+
+        //for (i=0;i<numberOfPollEvent;i++) // loop each events
+        if(numberOfPollEvent > 0)
+        {
+            //printf("for [%d] \n",i);
+            if (( (m_events[i].events & EPOLLERR) || (m_events[i].events & EPOLLRDHUP)
+                ||  (m_events[i].events & EPOLLHUP) ))// && (!(m_events[i].events & EPOLLIN)))
+                {
+                EventErrorHandler(m_events[i]);
+            }
+            else if(m_events[i].events & EPOLLIN)
+            {
+                ProcessClientEvent(m_events[i]);
+            }
+
+        }
+        fflush(stdout);
+
+    }
+
+    free(m_events);
+}
+
+
+void SocketWatcher::EventErrorHandler(struct epoll_event &event)
+{
+#if 0
+    printf("Socket Watcher: EventErrorHandler()\n");
+
+    SocketInfo* dh = (SocketInfo*)event.data.ptr;
+    close (dh->m_socketDescriptor);
+    delete dh;
+#endif
+}
+
+void SocketWatcher::AcceptNewClientConnection(struct epoll_event &event)
+{
+    printf("Socket Watcher: AcceptNewClientConnection()\n");
+#if 0
+    //while(1)
+    {
+        struct sockaddr in_addr;
+        socklen_t in_len;
+        int infd;
+        //char hbuf[MAXBUFSIZE], sbuf[MAXBUFSIZE];
+
+        in_len = sizeof in_addr;
+        infd = accept(m_listeningSocketDescriptor,&in_addr,&in_len);
+        if (infd == -1) //error or Exception
+        {
+            /*
+//            if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
+//            {
+//                //  We have processed all incoming connections.
+//                //break;
+//            }
+//            else
+//            {
+//                perror ("accept"); // error in accepting connection
+//                //break;
+//            }
+            */
+            return;
+        }
+        /*
+//        if(getnameinfo(&in_addr,in_len,
+//                       hbuf,sizeof hbuf,
+//                       sbuf,sizeof sbuf,
+//                       NI_NUMERICHOST | NI_NUMERICSERV) == 0)
+//        {
+//            printf("Accepted connection on descriptor %d "
+//                   "(host=%s, port=%s)\n", infd, hbuf, sbuf);
+//            fflush(stdout);
+//        }
+*/
+        /* Make the incoming socket non-blocking and add it to the list of fds to monitor. */
+
+        if(SetSocketFlags(infd,O_NONBLOCK) < 0)
+        {
+            perror ("Flag Error:");
+            return;// exit()
+        }
+
+        event.data.ptr = new SocketInfo(infd,64);
+#ifdef EDGETRIGGERED
+        event.events = EPOLLIN | EPOLLET | EPOLLERR | EPOLLRDHUP | EPOLLHUP;
+#else
+        event.events = EPOLLIN | EPOLLERR | EPOLLRDHUP | EPOLLHUP;
+#endif
+        if(epoll_ctl(m_epollDescriptor,EPOLL_CTL_ADD,infd,&event))
+        {
+            perror ("epoll_ctl");
+            return; // exit()
+        }
+        MUXER.AddSubscriberSocket(infd);
+
+    }
+
+#endif
+}
+
+void SocketWatcher::ProcessClientEvent(struct epoll_event &event)
+{
+
+    printf("Socket Watcher: ProcessClientEvent();");
+
+#if 0
+
+
+    int done = 0; // success
+
+    SocketInfo* dh = (SocketInfo*)event.data.ptr;
+#ifdef EDGETRIGGERED
+    while(1)
+    {
+#endif
+        MUXER.RemoveSubscriberSocket(dh->m_socketDescriptor);
+
+        dh->m_bufferedReader->ReadFromSocket(dh->m_socketDescriptor,done);
+        if(done == 1) // socket read Error
+        {
+
+            SocketInfo* dh = (SocketInfo*)event.data.ptr;
+            //      printf("Closed connection on descriptor %d\n",dh->m_socketDescriptor);
+            close (dh->m_socketDescriptor);
+            delete dh;
+            return;
+
+        }
+#ifdef EDGETRIGGERED
+
+        else if(done == 2) //EAGAIN
+        {
+            //    printf("EAGAIN\n");
+            return;
+        }
+
+    }
+#endif
+    //printf("\n\t\t\tReturning\n");
+#endif
+}
+
+int SocketWatcher::SetSocketFlags(int sock,int newFlag)
+{
+    int flags;
+    flags = fcntl (sock,F_GETFL, 0);
+    if (flags == -1)
+    {
+        perror ("fcntl");
+        return -1;
+    }
+
+    flags |= newFlag;//O_NONBLOCK;
+
+    if (fcntl (sock,F_SETFL, flags) < 0)
+    {
+        perror ("fcntl");
+        return -1;
+    }
+    return 1;
+}
+
+#ifndef SocketWatcher_H
+#define SocketWatcher_H
+
+#include <stdio.h>
+#include <error.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/epoll.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAXEVENTS 1024
+#define DEFAULT_SERVER_EVENTS EPOLLIN | EPOLLERR | EPOLLRDHUP | EPOLLHUP
+
+class SocketWatcher
+{
+protected:
+
+    int m_listeningSocketDescriptor;
+    int m_epollDescriptor;
+    int m_socketStatus;
+    uint32_t m_eventsToHandle;
+    int m_maximumEventCount;
+
+    struct epoll_event m_event;
+    struct epoll_event* m_events;
+
+    void (SocketWatcher::*watchEvent)();
+
+
+    int SetSocketFlags(int sock,int newFlag);
+    void AddDescriptor(void* eventData = NULL);
+
+    virtual void AcceptNewClientConnection(struct epoll_event &event);
+    virtual void ProcessClientEvent(struct epoll_event &event);
+    virtual void EventErrorHandler(struct epoll_event &event);
+
+public:
+    SocketWatcher();
+    ~SocketWatcher();
+    void CreateEpollSocket(int listeningSocket =-1,int maximumEvent=MAXEVENTS,uint32_t eventsToHandle = DEFAULT_SERVER_EVENTS);
+    void CreateEpollSocket(int clientSocketfd,uint32_t eventsToHandle,void* buffer);
+
+    void StartWatcher();
+    void StartServerWatcher();
+    void StartClientWatcher();
+
+};
+
+#endif // SocketWatcher_H
+
+#include "SubscriberServer.h"
+
+DataMultiplexer MUXER;
+
+SubscriberServer::SubscriberServer(int port)
+{
+    int sockFd= CreateServerSocket(port);
+    CreateEpollSocket(sockFd);
+    watchEvent = &SocketWatcher::StartServerWatcher;
+    printf("Subscriber Server\n");
+}
+
+SubscriberServer::SubscriberServer(char* ipAddr,int port)
+{
+    int sockFd= CreateClientSocket(ipAddr,port);
+    CreateEpollSocket(sockFd,DEFAULT_SERVER_EVENTS | EPOLLET,new SocketInfo(sockFd,64));
+    watchEvent = &SocketWatcher::StartClientWatcher;
+    //MUXER.AddSubscriberSocket(sockFd);
+    printf("Subscriber Client\n");
+}
+
+SubscriberServer::~SubscriberServer()
+{
+
+}
+
+void SubscriberServer::EventErrorHandler(struct epoll_event &event)
+{
+    printf("Socket Closing()\n");
+    SocketInfo* dh = (SocketInfo*)event.data.ptr;
+    close (dh->m_socketDescriptor);
+    delete dh;
+}
+
+void SubscriberServer::AcceptNewClientConnection(struct epoll_event &event)
+{
+    printf("SubscriberServer::AcceptNewClientConnection();");
+    struct sockaddr in_addr;
+    socklen_t in_len;
+    int infd;
+
+    in_len = sizeof in_addr;
+    infd = accept(m_listeningSocketDescriptor,&in_addr,&in_len);
+    if (infd == -1) //error or Exception
+
+        return;
+
+    if(SetSocketFlags(infd,O_NONBLOCK) < 0)
+    {
+        perror ("Flag Error:");
+        return;// exit()
+    }
+
+    event.data.ptr = new SocketInfo(infd,64);
+#ifdef EDGETRIGGERED
+    event.events = EPOLLIN | EPOLLET | EPOLLERR | EPOLLRDHUP | EPOLLHUP;
+#else
+    event.events = EPOLLIN | EPOLLERR | EPOLLRDHUP | EPOLLHUP;
+#endif
+    if(epoll_ctl(m_epollDescriptor,EPOLL_CTL_ADD,infd,&event))
+    {
+        perror ("epoll_ctl");
+        return; // exit()
+    }
+
+}
+
+void SubscriberServer::ProcessClientEvent(struct epoll_event &event)
+{
+
+    int done = 0; // success
+
+    SocketInfo* dh = (SocketInfo*)event.data.ptr;
+#ifdef EDGETRIGGERED
+    while(1)
+    {
+#endif
+        dh->m_bufferedReader->ReadFromSocket(dh->m_socketDescriptor,done);
+        if(done == 1) // socket read Error
+        {
+            EventErrorHandler(event);
+            /*
+            printf("Socket Closing()\n");
+            SocketInfo* dh = (SocketInfo*)event.data.ptr;
+            close (dh->m_socketDescriptor);
+            delete dh;
+            */
+            return;
+
+        }
+#ifdef EDGETRIGGERED
+
+        else if(done == 2) //EAGAIN
+        {
+            return;
+        }
+
+    }
+#endif
+}
+
+
+#ifndef SUBSCRIBERSERVER_H
+#define SUBSCRIBERSERVER_H
+
+#include "SocketInfo.h"
+#include "DataMultiplexer.h"
+#include "SocketWatcher.h"
+#include "SocketClass.h"
+
+#define EDGETRIGGERED 3
+
+
+class SubscriberServer : public SocketWatcher, public SocketClass
+{
+public:
+    SubscriberServer(int port);
+    SubscriberServer(char* ipAddr,int port);
+    ~SubscriberServer();
+
+    virtual void EventErrorHandler(struct epoll_event &event);
+    virtual void AcceptNewClientConnection(struct epoll_event &event);
+    virtual void ProcessClientEvent(struct epoll_event &event);
+
+};
+
+#endif // SUBSCRIBERSERVER_H
