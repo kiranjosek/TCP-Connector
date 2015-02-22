@@ -1,0 +1,1272 @@
+#include "MemoryBlock.h"
+#include <fstream>
+using namespace std;
+
+int MemoryBlock::currentCount;
+
+
+MemoryBlock::MemoryBlock(unsigned long memStart,unsigned long maxSize)
+{
+    m_memoryBase  = 
+
+memStart;
+    m_next_Block  = NULL;
+    m_prev_Block  = NULL;
+    m_large_Block = NULL;
+    
+
+m_small_Block = NULL;
+    m_maxSize = maxSize;
+    //#printf("Memory Block Created\n");
+    count = 
+
+MemoryBlock::currentCount;
+    MemoryBlock::currentCount++;
+    /*writeLog("\nBlock Created ");
+    
+
+writeLog(count);
+    writeLog("\nSize ");
+    writeLog(m_maxSize);
+*/
+
+}
+
+MemoryBlock::~MemoryBlock()
+{
+   
+
+ /*
+    writeLog("\nBlock Removed ");
+    writeLog(count);
+*/
+    //#printf("Memory Block Removed
+
+\n");
+}
+
+#if 0
+void MemoryBlock::show()
+{
+    //#printf("<--[%u,%u,%u](%d)-->",this-
+
+>m_prev_Block,this,this->m_next_Block,this->m_maxSize);
+}
+void MemoryBlock::showSized()
+{
+    
+
+//#printf("<--[%u,%u,%u](%d)-->",this->m_small_Block,this,this->m_large_Block,this->m_maxSize);
+}
+#else
+void MemoryBlock::Show()
+{
+    //#printf("<--[%lu,%lu,%lu](%d,%lu)-->",this->m_prev_Block ?
+
+this->m_prev_Block->m_memoryBase : 0 ,this->m_memoryBase,this->m_next_Block ? this-
+
+>m_next_Block->m_memoryBase : 0,this->m_maxSize,this->count);
+}
+void MemoryBlock::ShowSized()
+{
+    
+
+//#printf("<--[%lu,%lu,%lu](%d,%lu)-->",this->m_small_Block ? this->m_small_Block->m_memoryBase : 
+
+0,this->m_memoryBase,this->m_large_Block ? this->m_large_Block->m_memoryBase :0,this-
+
+>m_maxSize,this->count);
+}
+#endif
+
+#ifndef DATAHOLDER_H
+#define DATAHOLDER_H
+#include "MemoryPool.h"
+#include <sys/epoll.h>
+#include 
+
+<stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+
+class DataStream : public MemoryPool
+{
+public:
+    char* m_buffer;
+};
+
+
+class 
+
+DataHolder
+{
+public:
+
+    unsigned int* m_dataLength;
+    DataStream* m_dataBuffer;
+    char* 
+
+m_position;
+    unsigned int m_bufferSize;      //  buffer size + size of (unsigned int)
+
+    
+
+DataHolder(int size);
+    void ResetPosition();
+    void CheckForBufferSize();
+    char* GetBuffer
+
+();
+    unsigned int GetBufferSize();
+    ~DataHolder();
+
+};
+
+
+#endif // DATAHOLDER_H
+
+#ifndef MEMORYPOOL_H
+#define MEMORYPOOL_H
+#include "MemoryMaster.h"
+
+class MemoryPool
+{
+
+public:
+    
+
+void* operator new(size_t sz);
+    void* operator new[](size_t sz);
+    void operator delete(void* 
+
+p);
+    void operator delete[](void* p);
+
+protected:
+    MemoryPool();
+
+private:
+
+
+};
+
+#endif // 
+
+MEMORYPOOL_H
+
+#include "MemoryPool.h"
+#include <iostream>
+using namespace std;
+
+MemoryPool::MemoryPool()
+{
+    
+
+//m_memoryBlock = MEMORYMASTER->allocateNewMemory(sizeToAllocate);
+
+}
+
+void* MemoryPool::operator 
+
+new(size_t sz)
+{
+    printf("Single Object: %u\n",sz);
+    return (char*)MEMORYMASTER-
+
+>GetMemoryBase()+MEMORYMASTER->AllocateNewMemory(sz)->m_memoryBase;
+}
+
+void* MemoryPool::operator 
+
+new[](size_t sz)
+{
+    sz = sz / sizeof(int);
+    //cerr << "Array Object : " << sz <<endl;
+    //    
+
+printf("Array Object: %u\n",sz);
+    MemoryBlock* memBlock = MEMORYMASTER->AllocateNewMemory(sz);
+
+  
+
+  if(memBlock)
+        return memBlock->m_memoryBase+(char*)MEMORYMASTER->GetMemoryBase();
+    
+
+//throw std::bad_alloc();
+    return memBlock;
+}
+
+
+void MemoryPool::operator delete(void* p)
+{
+    
+
+printf("Delete:Single Object\n");
+    MEMORYMASTER->FreeMemoryWithBase(p);
+}
+
+void 
+
+MemoryPool::operator delete[](void* p)
+{
+    //printf("Delete:ArrayType\n");
+    MEMORYMASTER-
+
+>FreeMemoryWithBase(p);
+}
+
+#ifndef MEMORYMASTER_H
+#define MEMORYMASTER_H
+
+#include <stdio.h>
+#include "MemoryBlock.h"
+
+#define 
+
+DEFAULT_MASTER_MEMORY_SIZE 1024*1024*256
+#define MINIMUM_ALLOCATION_SIZE 1024
+
+#define MEMORYMASTER 
+
+MemoryMaster::getMemoryMaster()
+
+class MemoryMaster
+{
+    char* m_masterMemoryBuffer;
+    MemoryBlock* 
+
+m_freeBlock;
+    MemoryBlock* m_usedBlock;
+    MemoryBlock* m_freeSort;
+
+    void FreeAllAfter
+
+(MemoryBlock* &memBlock);
+
+    void RemoveFromUsedBlock(MemoryBlock* memBlock);
+    void 
+
+AddToUsedBlock(MemoryBlock* &memBlock);
+
+    MemoryBlock* GetSuitableFreeSpaceBlock(unsigned long 
+
+memSize);
+    MemoryBlock* FindBlockWithMemory(unsigned long blockMemoryBase);
+    MemoryBlock* 
+
+AllocateMemoryFromParent(MemoryBlock* &parentBlock,unsigned long sizeNeeded);
+
+    //void 
+
+freeMemoryBlock(MemoryBlock* &memBlock);
+    void AddToFreeBlock(MemoryBlock* &memBlock);
+    void 
+
+CombineFreeBlocks(MemoryBlock* &memBlock);
+
+    void ReOrderMemory(MemoryBlock* &memBlock);
+
+    
+
+MemoryMaster();
+
+public:
+
+    static MemoryMaster* getMemoryMaster()
+    {
+        //printf("Master 
+
+Memory Allocated\n");
+        static MemoryMaster* memMaster = new MemoryMaster();
+        return 
+
+memMaster;
+    }
+
+    static void freeMemoryMaster()
+    {
+        if(MEMORYMASTER)
+            delete 
+
+MEMORYMASTER;
+    }
+
+    ~MemoryMaster();
+    MemoryBlock* AllocateNewMemory(long sizeNeeded);
+    
+
+void FreeMemoryWithBase(void* baseMemory);
+    void FreeMemoryBlock(MemoryBlock* &memBlock);
+
+    
+
+void* GetMemoryBase();
+
+
+    void ShowMemory()
+    {
+
+        return ;
+        printf
+
+("\n###################################################################\n");
+        if
+
+(m_freeBlock)
+        {
+            //printf("FreeBlockStart:%u\n",m_freeBlock);
+            
+
+MemoryBlock* memBlock = m_freeBlock;
+
+            if(memBlock)
+            {
+
+                while
+
+(memBlock)
+                {
+                    memBlock->Show();
+                    memBlock 
+
+=memBlock->m_next_Block;
+                }
+            }
+            else
+                printf
+
+("[0,0,0]");
+
+
+            printf("\n");
+            memBlock = m_freeSort;
+
+            if(memBlock)
+   
+
+         {
+
+                while(memBlock)
+                {
+                    memBlock-
+
+>ShowSized();
+                    memBlock = memBlock->m_large_Block;
+                }
+            
+
+}
+            else
+                printf("[0,0,0]");
+
+
+        }
+        else
+            printf
+
+("[0,0,0]");
+
+        printf("\n");
+
+        //return ;
+        if(m_usedBlock)
+        {
+            
+
+//printf("\nUsedBlock: %ul\n",m_usedBlock);
+            MemoryBlock* memBlock = m_usedBlock;
+
+       
+
+     while(memBlock)
+            {
+                memBlock->Show();
+                memBlock 
+
+=memBlock->m_next_Block;
+            }
+        }
+        else
+            printf("[0,0,0]");
+
+        
+
+printf("\n");
+        printf("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+$$$$$$$$\n");
+
+    }
+
+
+};
+
+#endif // MEMORYMASTER_H
+
+#include "MemoryMaster.h"
+#include <stdlib.h>
+
+/*
+#include <fstream>
+
+using namespace std;
+
+void 
+
+writeLog(char *data)
+{
+    return;
+    ofstream out;
+    out.open("out.txt",ios::out |ios::app);
+    
+
+out << data ;
+    out.close();
+}
+
+void writeLog(long data)
+{
+    return;
+    ofstream out;
+    out.open
+
+("out.txt",ios::out |ios::app);
+    out << data;
+    out.close();
+}
+*/
+
+MemoryMaster::MemoryMaster()
+{
+   
+
+ MemoryBlock::currentCount = 0;
+    //#writeLog
+
+("\n***************************************************************************\n");
+    
+
+m_masterMemoryBuffer = NULL;
+    m_masterMemoryBuffer = new char[DEFAULT_MASTER_MEMORY_SIZE];
+    
+
+m_freeBlock = new MemoryBlock(0,DEFAULT_MASTER_MEMORY_SIZE);
+    m_freeSort = m_freeBlock;
+    
+
+m_usedBlock = NULL;//new MemoryBlock(NULL,0);
+    //#printf("Constructor Initilialization Done
+
+\n");
+    atexit(freeMemoryMaster);
+}
+
+MemoryMaster::~MemoryMaster()
+{
+    if(m_masterMemoryBuffer)
+     
+
+   delete []m_masterMemoryBuffer ;
+
+    //#printf("Removing >>>>usedBlock\n");
+    FreeAllAfter
+
+(m_usedBlock);
+    //#printf("Removing >>>>freeBlock\n");
+    FreeAllAfter(m_freeBlock);
+
+
+}
+
+void 
+
+MemoryMaster::FreeAllAfter(MemoryBlock* &memBlock)
+{
+    MemoryBlock* currentBlock = memBlock;
+    
+
+MemoryBlock* previousBlock =  NULL;
+    while(currentBlock)
+    {
+        previousBlock = 
+
+currentBlock;
+        currentBlock = currentBlock->m_next_Block;
+        delete previousBlock;
+      
+
+  previousBlock = NULL;
+
+    }
+
+    if(previousBlock)
+    {
+        delete previousBlock;
+        
+
+previousBlock = NULL;
+    }
+}
+
+void* MemoryMaster::GetMemoryBase()
+{
+    return m_masterMemoryBuffer;
+}
+
+MemoryBlock* MemoryMaster::AllocateNewMemory(long sizeNeeded)
+{
+
+    //    if(sizeNeeded < 
+
+MINIMUM_ALLOCATION_SIZE)
+    //        sizeNeeded = MINIMUM_ALLOCATION_SIZE;
+
+    MemoryBlock* 
+
+parentBlock = GetSuitableFreeSpaceBlock(sizeNeeded);
+    //cerr << "Got Parent Block\n";
+
+    if
+
+(parentBlock)
+    {
+        MemoryBlock* memBlock = AllocateMemoryFromParent
+
+(parentBlock,sizeNeeded);
+        //#this->ShowMemory();
+        return memBlock;
+    }
+    
+
+//#printf("Not Able to allocate Memory\n");
+    //#this->ShowMemory();
+
+    return NULL;
+}
+
+MemoryBlock* MemoryMaster::GetSuitableFreeSpaceBlock(unsigned long memSize)
+{
+    if(m_freeBlock)
+   
+
+ {
+        MemoryBlock* currentBlock = m_freeBlock;
+
+        while(currentBlock)
+        {
+            
+
+if(currentBlock->m_maxSize >= memSize)
+            {
+                return currentBlock;
+           
+
+ }
+
+            currentBlock = currentBlock->m_large_Block;
+        }
+
+        //cerr << "Not Enough 
+
+Free Space\n";
+    }
+    else
+    {
+        //cerr << "No Free Block Available\n";
+    }
+    return 
+
+NULL;
+}
+
+MemoryBlock* MemoryMaster::AllocateMemoryFromParent(MemoryBlock* &parentBlock,unsigned long 
+
+sizeNeeded)
+{
+    if(parentBlock->m_maxSize >= sizeNeeded)
+    {
+        //#printf("Parent>>>>>>>> 
+
+%d,%lu\n",parentBlock->count,sizeNeeded);
+
+        MemoryBlock* newMemoryBlock = new MemoryBlock
+
+(parentBlock->m_memoryBase,sizeNeeded);
+        parentBlock->m_memoryBase += sizeNeeded;
+        
+
+parentBlock->m_maxSize -= sizeNeeded;
+        AddToUsedBlock(newMemoryBlock);
+
+        if
+
+(parentBlock->m_small_Block)
+        {
+            parentBlock->m_small_Block->m_large_Block = 
+
+parentBlock->m_large_Block;
+        }
+        else if(parentBlock->m_large_Block)
+        {
+          
+
+  parentBlock->m_large_Block->m_small_Block = NULL;
+            m_freeSort = parentBlock-
+
+>m_large_Block;
+        }
+        else
+        {
+            m_freeSort = NULL;
+            
+
+m_freeBlock=NULL;
+        }
+
+        if(parentBlock->m_large_Block)
+            parentBlock-
+
+>m_large_Block->m_small_Block = parentBlock->m_small_Block;
+        else if(parentBlock-
+
+>m_small_Block)
+            parentBlock->m_small_Block->m_large_Block = NULL;
+        else
+        
+
+{
+            m_freeSort = NULL;
+            m_freeBlock=NULL;
+        }
+
+        if(parentBlock-
+
+>m_maxSize == 0)
+        {
+            if(parentBlock == m_freeBlock)
+            {
+                
+
+m_freeBlock =  parentBlock->m_next_Block;
+                if(parentBlock->m_next_Block)
+            
+
+        parentBlock->m_next_Block->m_prev_Block = NULL;
+            }
+            else
+            
+
+{
+                if(parentBlock->m_next_Block)
+                {
+                    parentBlock-
+
+>m_prev_Block->m_next_Block = parentBlock->m_next_Block;
+
+                    parentBlock-
+
+>m_next_Block->m_prev_Block = parentBlock->m_prev_Block;
+                }////#printf("I'm in 
+
+else\n");
+            }
+
+            delete parentBlock;
+            parentBlock = NULL;
+        }
+
+     
+
+   ReOrderMemory(parentBlock);
+        return newMemoryBlock;
+    }
+
+    return NULL;
+}
+
+void 
+
+MemoryMaster::AddToUsedBlock(MemoryBlock* &memBlock)
+{
+    memBlock->m_next_Block = NULL;
+    
+
+memBlock->m_prev_Block = NULL;
+    if(m_usedBlock)
+    {
+        MemoryBlock* currentBlock = 
+
+m_usedBlock;
+        MemoryBlock* previousBlock = NULL;
+        while(currentBlock)
+        {
+        
+
+    if(currentBlock->m_memoryBase > memBlock->m_memoryBase)
+            {
+                
+
+memBlock->m_prev_Block = currentBlock->m_prev_Block;
+                memBlock->m_next_Block = 
+
+currentBlock;
+
+                if(memBlock->m_prev_Block)
+                    memBlock-
+
+>m_prev_Block->m_next_Block = memBlock; //linking
+                else
+                    
+
+m_usedBlock = memBlock;
+
+                if(memBlock->m_next_Block)
+                    memBlock-
+
+>m_next_Block->m_prev_Block = memBlock;//linking
+
+                break;
+            }
+            
+
+else
+            {
+                previousBlock = currentBlock;
+                currentBlock = 
+
+currentBlock->m_next_Block;
+            }
+        }
+
+        if(currentBlock==NULL) // didn't find 
+
+any block location greater than memBlock
+        {
+            //Adding at the end
+            
+
+previousBlock->m_next_Block = memBlock;
+            memBlock->m_prev_Block = previousBlock;
+        
+
+}
+    }
+    else
+    {
+        m_usedBlock = memBlock;
+    }
+
+}
+
+void MemoryMaster::ReOrderMemory
+
+(MemoryBlock* &memBlock)
+{
+
+    if(memBlock==NULL)
+        return;
+
+    memBlock->m_large_Block = 
+
+NULL;
+    memBlock->m_small_Block = NULL;
+
+    //#printf("reOrder\n");
+    if(m_freeSort)
+    {
+        
+
+MemoryBlock* currentBlock = m_freeSort; //#m_freeBlock;
+        MemoryBlock* previousBlock = 
+
+NULL;
+        while(currentBlock)
+        {
+            if(currentBlock->m_maxSize >= memBlock-
+
+>m_maxSize)
+            {
+                memBlock->m_small_Block = currentBlock->m_small_Block;
+    
+
+            memBlock->m_large_Block = currentBlock;
+
+                if(memBlock->m_small_Block)
+    
+
+                memBlock->m_small_Block->m_large_Block = memBlock;
+                else
+            
+
+        m_freeSort = memBlock;
+
+                if(memBlock->m_large_Block)
+                    
+
+memBlock->m_large_Block->m_small_Block = memBlock;
+
+                break;
+            }
+            
+
+else
+            {
+                previousBlock = currentBlock;
+                currentBlock = 
+
+currentBlock->m_large_Block;
+            }
+        }
+
+        if(currentBlock ==NULL)
+        {
+        
+
+    previousBlock->m_large_Block = memBlock;
+            memBlock->m_small_Block = previousBlock;
+  
+
+      }
+    }
+    else
+    {
+        m_freeBlock = memBlock;
+        m_freeSort = memBlock;
+    }
+
+}
+
+MemoryBlock* MemoryMaster::FindBlockWithMemory(unsigned long blockMemoryBase)
+{
+    MemoryBlock* 
+
+currentBlock = m_usedBlock;
+
+    while(currentBlock)
+    {
+        if(currentBlock->m_memoryBase >= 
+
+blockMemoryBase)
+            break;
+        currentBlock = currentBlock->m_next_Block;
+    }
+
+    if
+
+(currentBlock->m_memoryBase == blockMemoryBase)
+    {
+        return currentBlock;
+    }
+    return 
+
+NULL;
+}
+
+void MemoryMaster::FreeMemoryWithBase(void* baseMemory)
+{
+    MemoryBlock* memBlock = 
+
+FindBlockWithMemory((char*)baseMemory - (char*)GetMemoryBase());
+
+    FreeMemoryBlock(memBlock);
+    
+
+//this->showMemory();
+}
+
+void MemoryMaster::FreeMemoryBlock(MemoryBlock* &memBlock)
+{
+    if
+
+(memBlock==NULL)
+        return;
+
+    //#writeLog("\nFree Memory\t");
+    //#writeLog(memBlock-
+
+>count);
+    //#printf("Freeing Info %d,%lu ",memBlock->count,memBlock->m_maxSize);
+
+    
+
+//#writeLog("\nFSize ");
+    //#writeLog(memBlock->m_maxSize);
+
+    RemoveFromUsedBlock(memBlock);
+   
+
+ AddToFreeBlock(memBlock);
+    CombineFreeBlocks(memBlock);
+    //#this->ShowMemory();
+}
+
+void 
+
+MemoryMaster::RemoveFromUsedBlock(MemoryBlock* memBlock)
+{
+    if(memBlock==m_usedBlock)
+    {
+       
+
+ m_usedBlock = memBlock->m_next_Block;
+        if(m_usedBlock)
+            m_usedBlock-
+
+>m_prev_Block =NULL;
+
+        if(memBlock->m_next_Block==NULL)
+            return;
+
+        if
+
+(memBlock->m_next_Block->m_next_Block)
+            memBlock->m_next_Block->m_next_Block-
+
+>m_prev_Block = m_usedBlock;
+
+        return;
+    }
+
+    memBlock->m_prev_Block->m_next_Block = 
+
+memBlock->m_next_Block;
+
+    if(memBlock->m_next_Block)
+        memBlock->m_next_Block->m_prev_Block 
+
+= memBlock->m_prev_Block;
+
+    memBlock->m_next_Block = NULL;
+    memBlock->m_prev_Block = NULL;
+    
+
+memBlock->m_large_Block=NULL;
+    memBlock->m_small_Block=NULL;
+
+}
+
+void MemoryMaster::AddToFreeBlock
+
+(MemoryBlock* &memBlock)
+{
+    if(m_freeBlock)
+    {
+        MemoryBlock* currentBlock = 
+
+m_freeBlock;
+        MemoryBlock* previousBlock= NULL;
+
+        while(currentBlock)
+        {
+         
+
+   if(currentBlock->m_memoryBase > memBlock->m_memoryBase)
+            {
+                memBlock-
+
+>m_next_Block = currentBlock;
+                memBlock->m_prev_Block = currentBlock-
+
+>m_prev_Block;
+
+
+                if(memBlock->m_prev_Block)
+                    memBlock-
+
+>m_prev_Block->m_next_Block = memBlock;
+                else
+                    m_freeBlock = 
+
+memBlock;
+
+                if(memBlock->m_next_Block)
+                    memBlock->m_next_Block-
+
+>m_prev_Block = memBlock;
+                break;
+            }
+            else
+            {
+         
+
+       previousBlock = currentBlock;
+                currentBlock = currentBlock->m_next_Block;
+    
+
+        }
+        }
+
+        if(currentBlock==NULL)
+        {
+            previousBlock->m_next_Block 
+
+= memBlock;
+            memBlock->m_prev_Block = previousBlock;
+        }
+    }
+    else
+    {
+        
+
+m_freeBlock = memBlock;
+        m_freeBlock->m_next_Block = NULL;
+        m_freeBlock->m_prev_Block 
+
+= NULL;
+    }
+
+    //cerr << "Add To Free Block Done\n";
+
+}
+
+void MemoryMaster::CombineFreeBlocks
+
+(MemoryBlock* &memBlock)
+{
+
+    if(memBlock->m_prev_Block)
+    {
+        MemoryBlock* previousBlock = 
+
+memBlock->m_prev_Block;
+
+        if(memBlock->m_prev_Block->m_memoryBase + memBlock->m_prev_Block-
+
+>m_maxSize == memBlock->m_memoryBase)
+        {
+            //      cerr << "Combined with PREV
+
+\n";
+            memBlock->m_maxSize += previousBlock->m_maxSize;
+            memBlock-
+
+>m_memoryBase = previousBlock->m_memoryBase;
+
+            memBlock->m_prev_Block = previousBlock-
+
+>m_prev_Block;
+
+
+            if(previousBlock->m_prev_Block)
+                previousBlock-
+
+>m_prev_Block->m_next_Block = memBlock;
+            else
+                m_freeBlock = memBlock;
+
+    
+
+        if(previousBlock == m_freeSort)
+            {
+                m_freeSort = previousBlock-
+
+>m_large_Block;
+            }
+
+            if(previousBlock->m_large_Block)
+                if
+
+(previousBlock->m_large_Block->m_small_Block)
+                    previousBlock->m_large_Block-
+
+>m_small_Block = previousBlock->m_small_Block;
+
+
+            if(previousBlock->m_small_Block)
+        
+
+        if(previousBlock->m_small_Block->m_large_Block)
+                    previousBlock-
+
+>m_small_Block->m_large_Block = previousBlock->m_large_Block;
+
+            if(previousBlock == 
+
+m_freeBlock)
+            {
+                m_freeBlock = previousBlock->m_next_Block;
+            }
+
+  
+
+          delete previousBlock;
+            previousBlock = NULL;
+        }
+    }
+
+    MemoryBlock* 
+
+nextBlock = memBlock->m_next_Block;
+
+    if(memBlock->m_next_Block)
+    {
+        if(memBlock-
+
+>m_memoryBase + memBlock->m_maxSize  == memBlock->m_next_Block->m_memoryBase)
+        {
+            
+
+//         cerr << "Combined with NEXT\n";
+            memBlock->m_maxSize += nextBlock-
+
+>m_maxSize;
+
+            memBlock->m_next_Block = nextBlock->m_next_Block;
+
+            if
+
+(nextBlock->m_next_Block)
+            {
+                nextBlock->m_next_Block->m_prev_Block = 
+
+memBlock;
+            }
+
+            if(nextBlock->m_large_Block)
+                if(nextBlock-
+
+>m_large_Block->m_small_Block)
+                    nextBlock->m_large_Block->m_small_Block = 
+
+nextBlock->m_small_Block;
+
+
+            if(nextBlock->m_small_Block)
+                if(nextBlock-
+
+>m_small_Block->m_large_Block)
+                    nextBlock->m_small_Block->m_large_Block = 
+
+nextBlock->m_large_Block;
+
+            if(nextBlock == m_freeSort)
+            {
+                
+
+m_freeSort = nextBlock->m_large_Block;
+            }
+
+            delete nextBlock;
+            
+
+nextBlock = NULL;
+
+        }
+    }
+
+    ReOrderMemory(memBlock);
+}
+
+#ifndef MEMORYBLOCK_H
+#define MEMORYBLOCK_H
+#include <stdio.h>
+
+class MemoryBlock
+{
+public:
+
+    unsigned 
+
+long m_memoryBase;
+    MemoryBlock* m_next_Block;
+    MemoryBlock* m_prev_Block;
+    MemoryBlock* 
+
+m_small_Block;
+    MemoryBlock* m_large_Block;
+    unsigned long m_maxSize;
+    int count;
+
+    static 
+
+int currentCount;
+    MemoryBlock(unsigned long memStart,unsigned long maxSize);
+    ~MemoryBlock
+
+();
+    void Show();
+    void ShowSized();
+};
+
+#endif // MEMORYBLOCK_H
+
+#include "DataHolder.h"
+#include <iostream>
+#include <string.h>
+using namespace std;
+
+DataHolder::DataHolder(int size)
+{
+    m_bufferSize = size+sizeof(unsigned int);
+    m_dataBuffer = 
+
+new DataStream[m_bufferSize];
+    ResetPosition();
+}
+
+DataHolder::~DataHolder()
+{
+    delete [] 
+
+m_dataBuffer;
+}
+
+void DataHolder::ResetPosition()
+{
+    m_position = (char*)m_dataBuffer;
+    
+
+m_dataLength = (unsigned int*)m_dataBuffer;
+
+}
+
+char* DataHolder::GetBuffer()
+{
+    return 
+
+(char*)m_dataBuffer;
+}
+
+unsigned int DataHolder::GetBufferSize()
+{
+    return m_bufferSize;
+}
+
+
+void 
+
+DataHolder::CheckForBufferSize()
+{
+ //   cerr << (*m_dataLength)+sizeof(unsigned int) << "^^^" << 
+
+m_bufferSize <<endl;
+
+    if((*m_dataLength)+sizeof(unsigned int) > m_bufferSize)
+    {
+        
+
+unsigned int lengthOfData = *m_dataLength;
+        m_bufferSize = lengthOfData+sizeof(unsigned 
+
+int);
+        delete[] m_dataBuffer;
+        m_dataBuffer = new DataStream[m_bufferSize];
+        
+
+ResetPosition();
+
+        *m_dataLength = lengthOfData;
+        m_position += sizeof(unsigned int);
+
+  
+
+  }
+
+   // cerr << "Done\n";
+}
+
