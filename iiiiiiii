@@ -1,0 +1,682 @@
+#include <sys/time.h>
+#include <stdio.h>
+#include <iostream>
+#include <pthread.h>
+using namespace std;
+#include "ProcessManager.h"
+
+#include <sys/signalfd.h>
+#include <signal.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+void *mainThread(void* arg)
+{
+
+    ProcessManager::init();
+    return NULL;
+
+}
+
+int main(int argc, char *argv[])
+{
+
+    pthread_t nthread;
+
+    int retThre = pthread_create(&nthread,NULL,mainThread,NULL);
+    fprintf(stdout,"\nThread id parent(): %u\n",pthread_self());
+
+    pthread_join(nthread,NULL);
+    return 0;
+}
+
+#ifndef PROCESSMANAGER_H
+#define PROCESSMANAGER_H
+#include <stdlib.h>
+
+#include <iostream>
+#include 
+
+<stdio.h>
+#include <signal.h>
+#include <wait.h>
+#include <vector>
+#include <map>
+#include <queue>
+
+
+enum 
+
+ePROCESS_CMD{eERROR=-1,eRUSUME=1,ePAUSE,eFORK,eKILL,eFULLSTATUS,eKILLED};
+
+using namespace std;
+
+struct ProcessInfo
+{
+    string status;
+    string name;
+};
+
+class ProcessManager
+{
+
+    static bool 
+
+killChild(pid_t pid);
+    static bool forkChild(string name);
+    static bool pauseChild(pid_t 
+
+pid);
+    static bool resumeChild(pid_t pid);
+
+    static string m_processMessage;
+
+
+public:
+
+    
+
+ProcessManager();
+    ~ProcessManager();
+    static map<pid_t,ProcessInfo> m_childProcesses;
+    
+
+static map<string,pid_t>      m_namePid;
+
+    static int childCount;
+    volatile static int 
+
+isLocked;
+    static queue<pid_t> removeList;
+
+    static bool removekilledChild(pid_t pid);
+    
+
+static pid_t getPidForProcessName(string name);
+
+    static void processCommand(int cmd,string 
+
+name="");
+
+    static string getPocessStatus();
+
+    static void init();
+
+    static string 
+
+getLastMessage()
+    {
+        return ProcessManager::m_processMessage;
+    }
+
+
+
+
+};
+
+#endif // 
+
+PROCESSMANAGER_H
+
+#include "ProcessManager.h"
+
+#define CHILD_PROCESS_DETAILS ProcessManager::m_childProcesses
+#define 
+
+PID_NAME_MAP          ProcessManager::m_namePid
+
+map<pid_t,ProcessInfo>  
+
+ProcessManager::m_childProcesses;
+map<string,pid_t>       ProcessManager::m_namePid;
+string 
+
+ProcessManager::m_processMessage;
+int ProcessManager::childCount = 0;
+volatile int 
+
+ProcessManager::isLocked = 0;
+queue<pid_t> ProcessManager::removeList;
+int cc = 0;
+
+static void 
+
+processRemoveList()
+{
+
+    cerr << "IN process Remove List\n";
+    while
+
+(ProcessManager::removeList.size())
+    {
+
+        pid_t pp = ProcessManager::removeList.front();
+    
+
+    ProcessManager::removeList.pop();
+        //        usleep(500);
+        
+
+ProcessManager::removekilledChild(pp);
+    }
+    cerr << "Going Out of process Remove List\n";
+
+}
+
+static void wait_for_child(int sig)
+{
+
+    pid_t pid;
+    pid = waitpid(-1, NULL, WNOHANG);
+    
+
+fprintf(stdout,"\nThread id(wait4child): %u",pthread_self());
+
+    while ( pid > 0)
+    {
+        
+
+cerr << "\nPID:" << pid;
+
+        ProcessManager::removeList.push(pid);
+        pid = waitpid(-1, 
+
+NULL, WNOHANG);
+        ++cc;
+        //        ProcessManager::getPocessStatus();
+    }
+
+    if(!
+
+ProcessManager::isLocked)
+    {
+        fprintf
+
+(stdout,"<<<<<<<<<<<<<<<<<<<<OPENED>>>>>>>>>>>>>>>>>>>\n");
+        processRemoveList();
+    }
+    
+
+else
+    {
+        fprintf(stdout,"<<<<<<<<<<<<<<<<<<<<LOCKED>>>>>>>>>>>>>>>>>>>\n");
+    }
+}
+
+static 
+
+void WaitForZombie()
+{
+    //cout<<"\n Set Wait for Zombie:"<<endl;
+    fflush(stdout);
+    struct 
+
+sigaction sa;
+    sa.sa_handler = wait_for_child;// Set up the signal handler
+    sigemptyset
+
+(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1)
+    {
+      
+
+  perror("sigaction");
+    }
+    else
+    {
+        cout << "succeess";
+    }
+
+}
+
+ProcessManager::ProcessManager()
+{
+}
+
+ProcessManager::~ProcessManager()
+{
+}
+
+void ProcessManager::init()
+{
+    sigset_t set;
+    int s;
+    sigemptyset(&set);
+    sigaddset(&set, SIGCHLD);
+    s = 
+
+pthread_sigmask(SIG_BLOCK, &set, NULL);
+
+    if (s != 0)
+        cerr << (s) <<  (" 
+
+pthread_sigmask");
+
+    fprintf(stdout,"\nThread id: %u\n",pthread_self());
+
+}
+
+pid_t 
+
+ProcessManager::getPidForProcessName(string name)
+{
+    map<string,pid_t>::iterator iter;
+    iter = 
+
+PID_NAME_MAP.find(name);
+    if(iter==PID_NAME_MAP.end())
+    {
+        return 0;
+    }
+    else
+    {
+  
+
+      return iter->second;
+    }
+}
+
+void ProcessManager::processCommand(int cmd,string name)
+{
+
+    
+
+while(ProcessManager::isLocked)
+    {
+        usleep(100);
+    }
+
+    ProcessManager::isLocked = 1;
+    
+
+processRemoveList();
+
+    pid_t pid = getPidForProcessName(name);
+
+    m_processMessage = "UNABLE TO 
+
+RUN COMMAND";
+
+    if(pid ==0)
+    {
+        m_processMessage = "NOT A RUNNING PROCESS";
+    }
+
+    
+
+switch(cmd)
+    {
+    case eRUSUME:
+        {
+            resumeChild(pid);
+        }
+        break;
+    
+
+case ePAUSE:
+        {
+            pauseChild(pid);
+        }
+        break;
+    case eFORK:
+        {
+  
+
+          if(pid)
+            {
+                m_processMessage = "TASK NAME ALREADY ASSIGNED";
+    
+
+        }
+            else
+            {
+                if(ProcessManager::childCount > 1000)
+       
+
+         {
+                    m_processMessage = "MAX CHILD REACHED\n" ;
+                    
+
+cerr<< ProcessManager::childCount <<endl;
+                }
+                else
+                {
+   
+
+                 forkChild(name);
+                    cerr << endl << name ;
+                    +
+
++ProcessManager::childCount;
+                }
+            }
+        }
+        break;
+    case eKILL:
+  
+
+      {
+            killChild(pid);
+        }
+        break;
+    case eFULLSTATUS:
+        {
+           
+
+ m_processMessage = getPocessStatus();
+        }
+        break;
+    case eKILLED:
+        {
+           
+
+ removekilledChild(pid);
+        }
+        break;
+    default:
+        {
+            m_processMessage 
+
+= "Invalid Command";
+        }
+    }
+
+    processRemoveList();
+    ProcessManager::isLocked = 0;
+
+}
+
+bool 
+
+ProcessManager::forkChild(string name)
+{
+    pid_t child_PID;
+    usleep(500);
+    child_PID = fork
+
+();
+
+    if(child_PID >= 0)
+    {
+        if(child_PID == 0)
+        {
+            //signal(SIGQUIT, 
+
+sigquit);
+            execl("./testEXE","./testEXE",(const char*)NULL);
+            exit(0);
+        
+
+}
+        else	/* Parent Process*/
+        {
+            ProcessInfo pi;
+            pi.status = 
+
+"RUNNING";
+            pi.name   = name;
+            CHILD_PROCESS_DETAILS[child_PID] = pi;
+         
+
+   PID_NAME_MAP[name] = child_PID;
+            cerr << "\nPID:" << child_PID;
+            
+
+WaitForZombie();
+        }
+    }
+    else
+    {
+        printf("\n Fork failed, quitting!!!!!!\n");
+    
+
+    m_processMessage = "TASK CREATION FAILED";
+
+        return false;
+    }
+
+    m_processMessage = 
+
+"TASK CREATED";
+    return true;
+}
+
+bool ProcessManager::killChild(pid_t pid)
+{
+    if(pid==0)
+        
+
+return false;
+
+    map<pid_t,ProcessInfo>::iterator iter;
+    iter = CHILD_PROCESS_DETAILS.find
+
+(pid);
+
+    if(iter==CHILD_PROCESS_DETAILS.end())
+    {
+        return false;
+    }
+
+    ProcessInfo pi 
+
+= iter->second;
+
+    if((iter->second).status=="PAUSED")
+    {
+        if(resumeChild(pid)==false)
+    
+
+    {
+            m_processMessage = "TASK RESUME FAILED";
+            return false;
+        }
+    }
+
+  
+
+  if(kill(pid, SIGTERM)==0)
+    {
+        m_processMessage = "TASK KILLED";
+        string name = 
+
+pi.name;
+        cout << "\n\t\t\t\t\t\t\t" <<name <<endl;
+        map<string,pid_t>::iterator 
+
+iterx;
+
+        iterx = PID_NAME_MAP.find(name);
+        if(iterx == PID_NAME_MAP.end())
+        {
+    
+
+        return true;
+        }
+
+        PID_NAME_MAP.erase(iterx);
+        
+
+CHILD_PROCESS_DETAILS.erase(iter);
+        return true;
+    }
+
+    m_processMessage = "TASK KILL 
+
+FAILED";
+
+    return false;
+
+}
+
+bool ProcessManager::removekilledChild(pid_t pid)
+{
+
+    fprintf
+
+(stdout,"\nREMOVE");
+
+    if(pid==0)
+        return false;
+    fprintf(stdout,"NAME");
+    string 
+
+name;
+
+    map<pid_t,ProcessInfo>::iterator iter;
+    iter = CHILD_PROCESS_DETAILS.find(pid);
+
+    if
+
+(iter==CHILD_PROCESS_DETAILS.end())
+    {
+        return false;
+    }
+
+    name = (iter-
+
+>second).name;
+    fprintf(stdout,"%s",name.c_str());
+
+    CHILD_PROCESS_DETAILS.erase(iter);
+
+    
+
+map<string,pid_t>::iterator iterx;
+
+    iterx = PID_NAME_MAP.find(name);
+    if(iterx == 
+
+PID_NAME_MAP.end())
+    {
+        --ProcessManager::childCount;
+        return true;
+    }
+
+    
+
+PID_NAME_MAP.erase(iterx);
+
+    m_processMessage = "TASK REMOVER";
+    --
+
+ProcessManager::childCount;
+    fprintf(stdout,"\nCOMPLETED childCount 
+
+%d",ProcessManager::childCount);
+
+    return true;
+
+
+
+}
+
+bool ProcessManager::pauseChild(pid_t pid)
+{
+
+    
+
+if(pid==0)
+        return false;
+
+    map<pid_t,ProcessInfo>::iterator iter;
+    iter = 
+
+CHILD_PROCESS_DETAILS.find(pid);
+
+    if(iter == CHILD_PROCESS_DETAILS.end())
+        return false;
+
+  
+
+  if(kill(pid, SIGSTOP)==0)
+    {
+        CHILD_PROCESS_DETAILS[pid].status="PAUSED";
+        
+
+m_processMessage = "TASK PAUSED";
+        return true;
+    }
+
+    m_processMessage = "TASK PAUSE 
+
+FAILED";
+
+    return false;
+
+}
+
+bool ProcessManager::resumeChild(pid_t pid)
+{
+    
+
+map<pid_t,ProcessInfo>::iterator iter;
+    iter = CHILD_PROCESS_DETAILS.find(pid);
+
+    if(iter == 
+
+CHILD_PROCESS_DETAILS.end())
+        return false;
+
+    if(kill(pid, SIGCONT)==0)
+    {
+        
+
+CHILD_PROCESS_DETAILS[pid].status = "RUNNING";
+        m_processMessage = "TASK RESUMED";
+        
+
+return true;
+    }
+
+    m_processMessage = "TASK RESUME FAILED";
+    return false;
+
+}
+
+string 
+
+ProcessManager::getPocessStatus()
+{
+    map<pid_t,ProcessInfo>::iterator iter       = 
+
+CHILD_PROCESS_DETAILS.begin();
+    map<pid_t,ProcessInfo>::iterator iter_end   = 
+
+CHILD_PROCESS_DETAILS.end();
+
+
+    map<string,pid_t>::iterator itername        = PID_NAME_MAP.begin
+
+();
+    map<string,pid_t>::iterator itername_end    = PID_NAME_MAP.end();
+
+    string s;
+    for
+
+(;itername!=itername_end;++itername)
+    {
+        s.append(itername->first); s.append("\t");
+       
+
+ iter = CHILD_PROCESS_DETAILS.find(itername->second);
+
+        if(iter != iter_end)
+        {
+        
+
+    s.append((iter->second).status); s.append("\t");
+            //s.append (iter->first);
+         
+
+   s.append("\n");
+        }
+
+
+    }
+    cerr << "STATUS: " << s.size();
+    return s;
+
+}
